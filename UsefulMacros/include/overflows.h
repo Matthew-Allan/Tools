@@ -1,7 +1,7 @@
 #ifndef SYSF_OVERFLOWS_H
 #define SYSF_OVERFLOWS_H
 
-#include <sys/types.h>
+#include <stdint.h>
 
 // Check if the result of `x * m` overflows a `size_t`.
 #define MULT_OVERFLOWS(x, m) ((x) > SIZE_MAX / (m))
