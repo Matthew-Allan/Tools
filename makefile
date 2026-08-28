@@ -19,7 +19,7 @@ OUT := bin
 all: $(PROGRAMS)
 
 clean:
-	rm -r bin
+	rm -rf bin
 
 $(OUT):
 	@mkdir -p $(OUT)

@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <sysmacros.h>
 #include <dbuffer.h>
@@ -16,7 +17,9 @@ typedef unsigned int uint;
     BOOL_ARG(x, CARRET, "carret", 'c') \
     BOOL_ARG(x, BINARY, "binary", 'b') \
     BOOL_ARG(x, DESCRIPTION, "description", 't') \
+    BOOL_ARG(x, HIDE_TABLE, "hide-table", 'x') \
     INV_BOOL_ARG(x, CHAR, "char", 'r') \
+    STRING_ARG(x, INPUT, "input", 'i') \
     INT_ARG_DEF(x, START, "start", 's', 0) \
     INT_ARG_DEF(x, END, "end", 'e', -1) \
     INT_ARG_DEF(x, ENTRIES_PER_ROW, "entries-per-row", 'p', 4) \
@@ -25,7 +28,7 @@ typedef unsigned int uint;
 #include <args.h>
 INIT_ARGS(ascii);
 
-typedef uint8_t (*data_supplier)(size_t index, void *source);
+typedef uint8_t (*data_supplier)(size_t index, const void *source);
 
 typedef struct column_map {
     const enum __ascii_arg_ind arg;
@@ -80,7 +83,7 @@ static void printHeader(const column *columns, size_t count, size_t entries_per_
     }
 }
 
-static void printContents(const column *columns, data_supplier supplier, void *data, size_t count, uint rows, uint cols, uint start, uint end) {
+static void printContents(const column *columns, data_supplier supplier, const void *data, size_t count, uint rows, uint cols, uint start, uint end, int hide_table) {
     for (size_t r = 0; r < rows; r++) {
         for (size_t c = 0; c < cols; c++) {
             const size_t chr = c * rows + r + start;
@@ -93,14 +96,14 @@ static void printContents(const column *columns, data_supplier supplier, void *d
                 column->displayCell(supplier(chr, data));
             }
             if (c != cols - 1) {
-                printf(" │");
+                if (!hide_table) printf(" │");
             }
         }
         printf("\n");
     }
 }
 
-static void printTable(const column *columns, data_supplier supplier, void *data, size_t count, uint8_t entries_per_row, uint start, uint end) {
+static void printTable(const column *columns, data_supplier supplier, const void *data, size_t count, uint8_t entries_per_row, uint start, uint end, int hide_table) {
     if (entries_per_row == 0) {
         entries_per_row++;
     }
@@ -108,42 +111,49 @@ static void printTable(const column *columns, data_supplier supplier, void *data
     const uint row_count = INT_DIV_CEIL(cells, entries_per_row);
     const uint col_count = INT_DIV_CEIL(cells, row_count);
 
-    printHeader(columns, count, col_count);
-    printContents(columns, supplier, data, count, row_count, col_count, start, end);
+    if (!hide_table) printHeader(columns, count, col_count);
+    printContents(columns, supplier, data, count, row_count, col_count, start, end, hide_table);
 }
 
-uint8_t orderedSupplier(size_t index, void *source) {
+uint8_t orderedSupplier(size_t index, const void *source) {
     return (void) source, (uint8_t) index;
 }
 
-uint8_t bufferSupplier(size_t index, void *source) {
+uint8_t bufferSupplier(size_t index, const void *source) {
     return ((uint8_t *) source)[index];
 }
 
 int main(int argc, char const *argv[]) {
-    if (processArgs((__args_core *) &ascii_args, argc - 1, argv + 1)) return 1;
+    if (processArgs(&ascii_args, argc - 1, argv + 1)) return 1;
     size_t column_count = 0;
     for (size_t i = 0; i < COLUMN_MAP_LEN; i++) {
-        column_count += (size_t) boolArgSet((__args_core *) &ascii_args, (int) COLUMN_MAP[i].arg);
+        column_count += (size_t) boolArgSet(&ascii_args, (int) COLUMN_MAP[i].arg);
     }
     column columns[column_count];
     int column_index = 0;
     for (size_t i = 0; i < COLUMN_MAP_LEN; i++) {
-        if (boolArgSet((__args_core *) &ascii_args, (int) COLUMN_MAP[i].arg)) {
+        if (boolArgSet(&ascii_args, (int) COLUMN_MAP[i].arg)) {
             columns[column_index++] = *COLUMN_MAP[i].col;
         }
     }
 
-    int start = getArgInt((__args_core *) &ascii_args, START_INDEX);
-    int end = getArgInt((__args_core *) &ascii_args, END_INDEX);
+    int start = getArgInt(&ascii_args, START_INDEX);
+    int end = getArgInt(&ascii_args, END_INDEX);
     start = start < 0 ? 0 : start;
 
-    int entries_per_row = getArgInt((__args_core *) &ascii_args, ENTRIES_PER_ROW_INDEX);
+    int entries_per_row = getArgInt(&ascii_args, ENTRIES_PER_ROW_INDEX);
     entries_per_row = entries_per_row < 0 ? 0 : (entries_per_row > 255 ? 255 : entries_per_row);
 
     data_supplier supplier;
-    void *source;
-    if(isatty(STDIN_FILENO)) {
+    const void *source;
+    const char *string_input = getArgString(&ascii_args, INPUT_INDEX);
+    void *buffer = NULL;
+    if (string_input) {
+        supplier = bufferSupplier;
+        source = string_input;
+        int len = (int) strlen(string_input);
+        end = end < 0 || end >= len ? len - 1 : end;
+    } else if (isatty(STDIN_FILENO)) {
         supplier = orderedSupplier;
         source = NULL;
         end = end < 0 ? 127 : end;
@@ -156,14 +166,16 @@ int main(int argc, char const *argv[]) {
             bytes_read = fread(buff, 1, sizeof(buff), stdin);
             bufferDData(&data, buff, bytes_read);
         } while(bytes_read > 0);
-        end = end < 0 ? data.utilised - 1: end;
+        end = end < 0 || end >= (int) data.utilised ? data.utilised - 1: end;
         supplier = bufferSupplier;
         source = data.data;
+        buffer = data.data;
     }
 
-    printTable(columns, supplier, source, column_count, (uint8_t) entries_per_row, (uint) start, (uint) end);
-    if (source != NULL) {
-        free(source);
+    int hide_table = boolArgSet(&ascii_args, HIDE_TABLE_INDEX);
+    printTable(columns, supplier, source, column_count, (uint8_t) entries_per_row, (uint) start, (uint) end, hide_table);
+    if (buffer != NULL) {
+        free(buffer);
     }
     return 0;
 }
