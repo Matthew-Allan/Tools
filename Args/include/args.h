@@ -41,14 +41,15 @@ int getArgInt(const args_list *args, int arg);
 
 #ifdef DEFINE_ARGS
 
+#include <concat.h>
+
 #define __SUM_ARG(title, args) + 1
 #define __LIST_ARG(title, args) (argument) args,
 #define __ENUM_ARG(title, args) title ## _INDEX,
 
-#define INIT_ARGS(name) \
-enum __ ## name ## _arg_ind { ARGS_LIST(__ENUM_ARG) }; \
-\
-static args_list name ## _args = { \
+#define ARGS_ENUM enum CONCAT(DEFINE_ARGS, _arg_ind) { ARGS_LIST(__ENUM_ARG) };
+#define ARGS_STRUCT \
+static args_list CONCAT(DEFINE_ARGS, _args) = { \
     .args = (argument[]) { ARGS_LIST(__LIST_ARG) }, \
     .arg_count = ARGS_LIST(__SUM_ARG) \
 };
